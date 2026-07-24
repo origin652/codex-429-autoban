@@ -8,10 +8,11 @@
 //     the upstream x-codex-* response headers, decides whether the 5-hour
 //     window or the weekly cap was exhausted, and records the exact reset
 //     time at which the credential may be used again.
-//   - scheduler: on every credential pick, it drops candidates whose recorded
-//     reset time has not yet passed (lazy re-enable, since CPA exposes no
-//     timer hook) and delegates the actual selection to the built-in
-//     round-robin scheduler.
+//   - scheduler: on every credential pick, it leaves host scheduling untouched
+//     unless a Codex credential is actively banned. During an active ban, the
+//     plugin picks the closest available approximation of CPA fill-first
+//     (highest priority, then lexicographically first ID); expired entries are
+//     lazily re-enabled.
 //   - management_api: exposes a small status page and authenticated API for
 //     manually clearing the in-memory ban state after the user resets Codex
 //     quota or uses a reset card upstream.
@@ -396,8 +397,10 @@ func classifyAndBuildBan(headers http.Header) (banEntry, bool) {
 	return banEntry{}, false
 }
 
-// handleSchedulerPick filters out credentials that are still banned, then
-// delegates the actual selection to the built-in round-robin scheduler.
+// handleSchedulerPick preserves CPA's configured scheduler when no Codex auth is
+// banned. The current CPA plugin API cannot exclude candidates and then rerun
+// the host's configured scheduler, so when a ban is active we make the closest
+// deterministic approximation of fill-first: highest priority, then lowest ID.
 func handleSchedulerPick(raw []byte) ([]byte, error) {
 	var req pluginapi.SchedulerPickRequest
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {
@@ -406,56 +409,35 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 
 	now := time.Now()
 	available := make([]pluginapi.SchedulerAuthCandidate, 0, len(req.Candidates))
+	bannedCount := 0
 	for _, candidate := range req.Candidates {
-		// Only Codex credentials are subject to our bans.
-		if !strings.EqualFold(candidate.Provider, providerCodex) {
-			available = append(available, candidate)
-			continue
-		}
-		// clearIfExpired auto-re-enables credentials whose reset time passed.
-		if banStore.clearIfExpired(candidate.ID, now) {
-			// Still banned: drop from the candidate list.
+		if strings.EqualFold(candidate.Provider, providerCodex) && banStore.clearIfExpired(candidate.ID, now) {
+			bannedCount++
 			continue
 		}
 		available = append(available, candidate)
 	}
 
-	// If every Codex candidate is banned (and there were no non-Codex ones),
-	// decline to handle so CPA's own logic can decide (e.g. wait on its
-	// built-in cooldown, or return an error). We do not force a pick here.
+	// No active bans: CPA owns selection completely, so configured first-fill,
+	// round-robin, and other strategies are not overridden.
+	if bannedCount == 0 {
+		return okEnvelope(pluginapi.SchedulerPickResponse{Handled: false})
+	}
+	// The stock API cannot fail closed when every candidate is banned. Declining
+	// selection lets CPA return its normal unavailable/cooldown result, but it
+	// may retry a banned credential; this is the unavoidable plugin-only limit.
 	if len(available) == 0 {
 		return okEnvelope(pluginapi.SchedulerPickResponse{Handled: false})
 	}
 
-	// CPA applies our response as follows (conductor.go):
-	//   - if AuthID is set and matches a candidate  -> use exactly that one
-	//   - else if DelegateBuiltin is set            -> run the built-in
-	//                                                   scheduler over the FULL
-	//                                                   candidate set (it cannot
-	//                                                   be shrunk by the plugin)
-	//   - else (Handled false)                      -> host falls back to its
-	//                                                   own built-in scheduler
-	//
-	// Because DelegateBuiltin would let round-robin pick a banned credential,
-	// when anything is banned we pick an available AuthID ourselves. When
-	// nothing is banned we delegate to round-robin to preserve normal
-	// load-balancing.
-	if len(available) == len(req.Candidates) {
-		return okEnvelope(pluginapi.SchedulerPickResponse{
-			DelegateBuiltin: pluginapi.SchedulerBuiltinRoundRobin,
-			Handled:         true,
-		})
-	}
-	// Pick the available candidate with the highest numeric priority value
-	// (CPA's convention: higher priority value = higher precedence).
-	chosen := available[0]
-	for _, c := range available[1:] {
-		if c.Priority > chosen.Priority {
-			chosen = c
+	sort.Slice(available, func(i, j int) bool {
+		if available[i].Priority != available[j].Priority {
+			return available[i].Priority > available[j].Priority
 		}
-	}
+		return available[i].ID < available[j].ID
+	})
 	return okEnvelope(pluginapi.SchedulerPickResponse{
-		AuthID:  chosen.ID,
+		AuthID:  available[0].ID,
 		Handled: true,
 	})
 }
