@@ -71,7 +71,7 @@ import (
 
 const (
 	pluginName    = "codex-429-autoban"
-	pluginVersion = "0.2.3"
+	pluginVersion = "0.2.4"
 
 	// providerCodex is the CPA provider key for OpenAI Codex (ChatGPT backend).
 	providerCodex = "codex"
@@ -562,8 +562,9 @@ func classifyAndBuildBan(headers http.Header) (banEntry, bool) {
 
 // handleSchedulerPick preserves CPA's configured scheduler when no Codex auth is
 // banned. The current CPA plugin API cannot exclude candidates and then rerun
-// the host's configured scheduler, so when a ban is active we make the closest
-// deterministic approximation of fill-first: highest priority, then lowest ID.
+// the host's configured scheduler. For a fill-first host, its native selector
+// chooses the lowest AuthID within the highest available priority tier; mirror
+// that rule exactly whenever an active ban requires a plugin decision.
 func handleSchedulerPick(raw []byte) ([]byte, error) {
 	var req pluginapi.SchedulerPickRequest
 	if errUnmarshal := json.Unmarshal(raw, &req); errUnmarshal != nil {

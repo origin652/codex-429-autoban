@@ -52,7 +52,7 @@ func TestSchedulerDoesNotOverrideHostWhenNothingIsBanned(t *testing.T) {
 	}
 }
 
-func TestSchedulerApproximatesFillFirstAfterBan(t *testing.T) {
+func TestSchedulerMirrorsFillFirstAfterBan(t *testing.T) {
 	resetBanStore(t)
 	banStore.set("codex-banned", banEntry{ResetAt: time.Now().Add(time.Hour), Window: "5h"})
 	response := schedulerResponseForTest(t, []pluginapi.SchedulerAuthCandidate{
@@ -65,7 +65,7 @@ func TestSchedulerApproximatesFillFirstAfterBan(t *testing.T) {
 		t.Fatalf("response must make a direct fallback selection: %+v", response)
 	}
 	if response.AuthID != "codex-a" {
-		t.Fatalf("AuthID = %q, want deterministic highest-priority first-fill approximation codex-a", response.AuthID)
+		t.Fatalf("AuthID = %q, want native fill-first choice within the highest available priority tier: codex-a", response.AuthID)
 	}
 }
 
