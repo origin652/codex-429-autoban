@@ -37,6 +37,8 @@ OpenAI 的 ChatGPT/Codex 后端在 429 时会返回一组自定义头（不是�
 
 CPA 当前的 scheduler plugin API 不支持“仅排除若干 AuthID 后再运行当前原生策略”。因此：无 ban 时插件返回 `Handled:false`，CPA 的全部原生策略保持不变；存在 ban 且 CPA 使用 `fill-first` 时，插件精确复刻该策略的最高优先级、同级 AuthID 字典序选择规则。若未来改用其他策略（如 weighted round-robin），plugin-only 不能无损复刻其内部状态。
 
+如果本次路由的**全部**候选都被插件 ban，现有 plugin API 也无法把“空候选集”交回 CPA；插件只能返回 `Handled:false` 让 CPA 走原本的不可用/重试处理。因此这个极端场景无法在 plugin-only 下严格 fail-closed。
+
 ## Management Panel / Plugin Store install
 
 This repo ships a `registry.json`. After a GitHub release is published, it can be used as a custom CPA plugin-store source. Add this URL to `plugins.store-sources`, then restart or refresh the management panel and search for the plugin in the store:

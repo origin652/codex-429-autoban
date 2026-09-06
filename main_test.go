@@ -74,7 +74,21 @@ func TestSchedulerAllBannedDeclinesSelection(t *testing.T) {
 	banStore.set("codex-banned", banEntry{ResetAt: time.Now().Add(time.Hour), Window: "5h"})
 	response := schedulerResponseForTest(t, []pluginapi.SchedulerAuthCandidate{{ID: "codex-banned", Provider: providerCodex}})
 	if response.Handled || response.AuthID != "" {
-		t.Fatalf("all-banned pool must be returned to stock CPA: %+v", response)
+		t.Fatalf("plugin-only API cannot fail closed: all-banned pool must be returned to stock CPA: %+v", response)
+	}
+}
+
+func TestSchedulerKeepsNonCodexCandidatesInFillFirstPool(t *testing.T) {
+	resetBanStore(t)
+	banStore.set("codex-banned", banEntry{ResetAt: time.Now().Add(time.Hour), Window: "5h"})
+	response := schedulerResponseForTest(t, []pluginapi.SchedulerAuthCandidate{
+		{ID: "codex-banned", Provider: providerCodex, Priority: 100},
+		{ID: "gemini-a", Provider: "gemini", Priority: 10},
+		{ID: "codex-z", Provider: providerCodex, Priority: 10},
+		{ID: "claude-a", Provider: "claude", Priority: 10},
+	})
+	if !response.Handled || response.AuthID != "claude-a" {
+		t.Fatalf("mixed candidate fill-first choice = %+v, want handled claude-a", response)
 	}
 }
 

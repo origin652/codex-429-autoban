@@ -9,9 +9,9 @@
 //     window or the weekly cap was exhausted, and records the exact reset
 //     time at which the credential may be used again.
 //   - scheduler: on every credential pick, it leaves host scheduling untouched
-//     unless a Codex credential is actively banned. During an active ban, the
-//     plugin picks the closest available approximation of CPA fill-first
-//     (highest priority, then lexicographically first ID); expired entries are
+//     unless a Codex credential is actively banned. For a fill-first host and
+//     at least one remaining candidate, it exactly mirrors CPA's selection:
+//     highest priority, then lexicographically first ID. Expired entries are
 //     lazily re-enabled.
 //   - management_api: exposes a small status page and authenticated API for
 //     manually clearing the persistent ban state after the user resets Codex
